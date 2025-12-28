@@ -2,6 +2,10 @@
 
 > **Mục đích tài liệu:** Kết hợp **Kiến trúc hệ thống** và **Quy trình xây dựng - triển khai** thành một guide duy nhất, vừa đủ chi tiết để dev team bắt tay code, vừa đủ hệ thống để làm playbook vận hành.
 
+## Runbook triển khai & kiểm tra webhook
+
+- Xem hướng dẫn chạy lệnh end-to-end (build → deploy → đăng ký webhook → smoke test): `docs/WEBHOOK_RUNBOOK.md`
+
 ---
 
 ## 1. Executive summary
