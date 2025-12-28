@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= shieldxbot/controller:v0.0.3
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -118,7 +118,14 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
-
+	$(CONTAINER_TOOL) push ${IMG}
+	echo "-------------------build success--------------------"
+	$(KUBECTL) -n shieldx-platform-system rollout restart deployment/shieldx-platform-controller-manager
+	make deploy
+	echo "-------------------rollout success------------------"
+	kubectl delete pod -n shieldx-platform-system myapp  --ignore-not-found=true
+	echo "-------------------delete pod nginx ------------------"
+	kubectl apply -f  /home/shieldx/Documents/GitHub/shieldx-platform/setup/webhook/test/pod.yaml
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
@@ -166,6 +173,70 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
+	# NOTE: Keep deploy idempotent; don't fail on missing dev-only test pods.
+	-kubectl delete pod -n shieldx-platform-system myapp --ignore-not-found=true
+	# Optional dev smoke-test pod (uncomment if you really want it)
+	# kubectl apply -f setup/webhook/test/pod.yaml
+
+.PHONY: webhook-status
+webhook-status: ## Print controller/webhook resources and recent webhook-related logs.
+	@NS=shieldx-platform-system; \
+	echo "## Deployments"; $(KUBECTL) -n $$NS get deploy -o wide; \
+	echo; echo "## Pods"; $(KUBECTL) -n $$NS get pods -o wide; \
+	echo; echo "## Webhook Service"; $(KUBECTL) -n $$NS get svc shieldx-platform-webhook-service -o wide; \
+	echo; echo "## Endpoints"; $(KUBECTL) -n $$NS get endpoints shieldx-platform-webhook-service -o wide || true; \
+	echo; echo "## EndpointSlices"; $(KUBECTL) -n $$NS get endpointslice -l kubernetes.io/service-name=shieldx-platform-webhook-service -o wide 2>/dev/null || true; \
+	echo; echo "## WebhookConfigurations"; $(KUBECTL) get validatingwebhookconfigurations,mutatingwebhookconfigurations | grep -i shieldx || true; \
+	echo; echo "## Recent manager logs (webhook lines)"; \
+	POD=$$($(KUBECTL) -n $$NS get pods -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true); \
+	if [ -n "$$POD" ]; then \
+		echo "Using pod: $$POD"; \
+		$(KUBECTL) -n $$NS logs $$POD -c manager --tail=100 | egrep -i 'webhook|serving|listening|tls|cert|error' || true; \
+	else \
+		echo "No controller-manager pod found"; \
+	fi
+
+.PHONY: webhook-smoke
+webhook-smoke: ## Server-side dry-run to verify admission webhooks (TLS + reachability + validation).
+	@set -e; \
+	echo "## Valid Tenant (should succeed)"; \
+	cat <<-'YAML' | $(KUBECTL) apply --dry-run=server -f -
+	apiVersion: platform.shieldx.io/v1alpha1
+	kind: Tenant
+	metadata:
+	  name: tenant-webhook-smoketest
+	spec:
+	  owners:
+	    - admin@example.com
+	  tier: basic
+	  isolation: namespace
+	YAML
+	@echo; echo "## Invalid Tenant (should fail validation, not TLS/timeout)"; \
+	TMP=$$(mktemp); \
+	set +e; \
+	cat <<-'YAML' | $(KUBECTL) apply --dry-run=server -f - 2>&1 | tee $$TMP; \
+	RC=$$?; \
+	set -e; \
+	if [ $$RC -eq 0 ]; then \
+		echo; echo "ERROR: Invalid Tenant unexpectedly succeeded."; \
+		rm -f $$TMP; \
+		exit 1; \
+	fi; \
+	if egrep -qi 'failed calling webhook|x509|tls:|timeout' $$TMP; then \
+		echo; echo "ERROR: Failure looks like webhook connectivity/TLS, not a validation error."; \
+		rm -f $$TMP; \
+		exit 1; \
+	fi; \
+	rm -f $$TMP; \
+	echo; echo "OK: Invalid Tenant failed validation as expected."
+	apiVersion: platform.shieldx.io/v1alpha1
+	kind: Tenant
+	metadata:
+	  name: tenant-webhook-should-fail
+	spec:
+	  tier: basic
+	  isolation: namespace
+	YAML
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
