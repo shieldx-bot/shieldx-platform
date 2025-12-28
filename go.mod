@@ -3,6 +3,7 @@ module github.com/shieldx-bot/shieldx-platform
 go 1.24.6
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	k8s.io/apimachinery v0.34.1
