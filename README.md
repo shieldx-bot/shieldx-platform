@@ -34,16 +34,16 @@ Tài liệu này mô tả:
 
 ```mermaid
 flowchart TD
-  Dev[Developer / CI]
-  CLI[shieldctl | Git commit]
-  API[K8s API Server]
-  TenantCR[Tenant CR]
-  Controller[Tenant Controller]
-  Namespace[Namespace tenant-<name>]
-  RBAC[RoleBinding]
-  NetPol[NetworkPolicy]
-  Quota[ResourceQuota]
-  Webhook[ImagePolicy Webhook]
+  Dev["Developer or CI"]
+  CLI["shieldctl or Git commit"]
+  API["Kubernetes API Server"]
+  TenantCR["Tenant Custom Resource"]
+  Controller["Tenant Controller"]
+  Namespace["Namespace tenant-name"]
+  RBAC["RoleBinding"]
+  NetPol["NetworkPolicy"]
+  Quota["ResourceQuota"]
+  Webhook["ImagePolicy Webhook"]
 
   Dev -->|create tenant| CLI
   CLI --> API
@@ -54,7 +54,8 @@ flowchart TD
   Controller --> NetPol
   Controller --> Quota
   Controller --> Webhook
-  Webhook -->|on admission| API
+  Webhook -->|admission review| API
+
 ```
 
 ### 2.3 Quy tắc thiết kế
