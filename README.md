@@ -428,8 +428,8 @@ kubebuilder init \
 
 **Checklist**
 
-* Manager chạy được
-* CRD có thể apply vào cluster
+* Manager chạy được (Done)
+* CRD có thể apply vào cluster (Done)
 
 ---
 
@@ -467,9 +467,9 @@ type TenantStatus struct {
 
 **Checklist**
 
-* `make manifests`
-* `kubectl apply -f config/crd`
-* `kubectl get tenants`
+* `make manifests` (Done) 
+* `kubectl apply -f config/crd` (Done)
+* `kubectl get tenants` (Done)
 
 ---
 
