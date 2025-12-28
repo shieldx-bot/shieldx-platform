@@ -350,48 +350,430 @@ Expose via Prometheus metrics from Controller.
 
 Each phase requires: runbook, rollback plan (delete Tenant CR), and postmortem template.
 
+---Tốt, phần này mình sẽ **viết lại ở mức “thực thi được ngay”**, đúng kiểu **Sprint plan cho Platform team**, không phải checklist chung chung.
+Mỗi Sprint sẽ có:
+
+* 🎯 **Mục tiêu kỹ thuật**
+* 🧠 **Tư duy thiết kế bắt buộc**
+* 🧩 **Task breakdown chi tiết (theo ngày / logic)**
+* ✅ **Acceptance Criteria (có thể test / demo / phá hoại)**
+* ⚠️ **Anti-pattern cần tránh** (rất quan trọng)
+
 ---
 
-## 12. Sprint Plan (3 Sprints) — Chi tiết task & Acceptance Criteria
+# 12. Sprint Plan — ShieldX Tenant Platform
 
-### Sprint 1: Abstraction & Provisioning (2 weeks)
+⏱️ **Tổng thời gian: 6 tuần (3 Sprint × 2 tuần)**
+👥 **Giả định:** 1–2 Platform Engineers
 
-* Tasks:
+---
 
-  * Scaffold Kubebuilder project
-  * Define Tenant CRD + Status
-  * Implement namespace creation + OwnerReference
-  * Unit tests (envtest)
-* Acceptance:
+## 🟦 Sprint 1 — Abstraction & Provisioning
 
-  * Creating Tenant -> new namespace exists with ownerref
-  * Deleting Tenant -> namespace gets removed
+**Thời gian:** 2 tuần
+**Chủ đề:** *Foundation & Controller correctness*
 
-### Sprint 2: Isolation & Governance (2 weeks)
+> 👉 Sprint này quyết định **bạn có phải Platform Engineer thật hay không**
+> Nếu làm sai Sprint 1 → các Sprint sau sẽ thành nợ kỹ thuật.
 
-* Tasks:
+---
 
-  * Implement NetworkPolicy templates
-  * Implement ResourceQuota mapping for tiers
-  * Implement RoleBinding creation from `spec.owners`
-  * Integration tests (KinD)
-* Acceptance:
+## 🎯 Mục tiêu Sprint 1
 
-  * Tenant with `isolation:Strict` has deny-all network policy
-  * Owners can create pods in namespace but external namespaces cannot access them
+* Thiết lập **Tenant CRD** làm *Single Source of Truth*
+* Controller **có thể reconcile chuẩn**, idempotent
+* Namespace lifecycle **được kiểm soát hoàn toàn**
+* Có **unit test chứng minh self-healing**
 
-### Sprint 3: Developer Experience & Hardening (2 weeks)
+---
 
-* Tasks:
+## 🧠 Tư duy thiết kế bắt buộc
 
-  * Build `shieldctl` CLI (create/status/delete)
-  * Add status conditions + spinner UX
-  * Create CI pipeline for controller image build and KinD e2e tests
-  * Documentation + ADRs
-* Acceptance:
+* **Controller ≠ Script**
+* Reconcile có thể chạy:
 
-  * Developer runs CLI and sees ready state
-  * CI passing on new commits
+  * nhiều lần
+  * bất kỳ lúc nào
+  * trong trạng thái cluster bị phá
+* Không được:
+
+  * giả định namespace đã tồn tại
+  * giả định thứ tự tạo tài nguyên
+
+---
+
+## 🧩 Task Breakdown — Sprint 1
+
+### 🔹 Task 1.1 — Scaffold Kubebuilder project
+
+**Việc làm**
+
+```bash
+kubebuilder init \
+  --domain shieldx.io \
+  --repo github.com/shieldx-bot/shieldx-platform \
+  --plugins go/v4
+```
+
+**Kết quả**
+
+* Có cấu trúc chuẩn:
+
+  ```
+  api/
+  controllers/
+  cmd/manager/
+  config/
+  ```
+
+**Checklist**
+
+* Manager chạy được
+* CRD có thể apply vào cluster
+
+---
+
+### 🔹 Task 1.2 — Define Tenant CRD + Status
+
+**Việc làm**
+
+* Tạo API:
+
+  ```
+  platform.shieldx.io/v1alpha1
+  Tenant
+  ```
+* `spec` chỉ chứa **business intent**
+* `status` phản ánh **tình trạng hệ thống**
+
+**TenantSpec tối thiểu**
+
+```go
+type TenantSpec struct {
+  Owners    []string `json:"owners"`
+  Tier      string   `json:"tier"`
+  Isolation string   `json:"isolation"`
+}
+```
+
+**TenantStatus**
+
+```go
+type TenantStatus struct {
+  Phase      string `json:"phase"`
+  Namespace  string `json:"namespace"`
+}
+```
+
+**Checklist**
+
+* `make manifests`
+* `kubectl apply -f config/crd`
+* `kubectl get tenants`
+
+---
+
+### 🔹 Task 1.3 — Implement Namespace Provisioning
+
+**Logic bắt buộc**
+
+* Namespace name: `tenant-<tenant.Name>`
+* Phải dùng:
+
+  * `controllerutil.CreateOrPatch`
+  * `SetControllerReference`
+
+**Pseudo-flow**
+
+```
+IF namespace not found
+  CREATE namespace
+ELSE
+  ENSURE labels / ownerref correct
+```
+
+**Checklist**
+
+* Namespace tự tạo
+* Có ownerReference trỏ về Tenant
+
+---
+
+### 🔹 Task 1.4 — OwnerReference & Self-Healing
+
+**Việc làm**
+
+* Gắn OwnerReference:
+
+  ```
+  Tenant -> Namespace
+  ```
+
+**Tình huống phải xử lý**
+
+1. `kubectl delete namespace tenant-x`
+2. Controller phải:
+
+   * nhận event
+   * tạo lại namespace
+
+**Checklist**
+
+* Không panic
+* Không loop vô hạn
+* Namespace quay lại sau vài giây
+
+---
+
+### 🔹 Task 1.5 — Unit Tests (envtest)
+
+**Việc làm**
+
+* Dùng `controller-runtime/envtest`
+* Test case tối thiểu:
+
+```text
+Given: Tenant created
+Then: Namespace exists
+And: Namespace.ownerRef == Tenant
+```
+
+```text
+Given: Tenant deleted
+Then: Namespace is garbage-collected
+```
+
+**Checklist**
+
+* Test chạy trong CI
+* Không cần cluster thật
+
+---
+
+## ✅ Acceptance Criteria — Sprint 1
+
+* ✅ Tạo Tenant → namespace xuất hiện
+* ✅ Namespace có OwnerReference đúng
+* ✅ Xoá Tenant → namespace tự biến mất
+* ✅ Xoá namespace → controller tạo lại
+* ✅ Unit test pass
+
+---
+
+## ⚠️ Anti-patterns cần tránh
+
+* ❌ Tạo namespace bằng `Create()` không patch
+* ❌ Không set OwnerReference
+* ❌ Logic phụ thuộc thứ tự chạy
+
+---
+
+---
+
+## 🟨 Sprint 2 — Isolation & Governance
+
+**Thời gian:** 2 tuần
+**Chủ đề:** *Security & Policy Enforcement*
+
+---
+
+## 🎯 Mục tiêu Sprint 2
+
+* Áp chính sách **Zero Trust Networking**
+* Quản lý **tài nguyên theo tier**
+* RBAC chính xác theo `spec.owners`
+* Chứng minh **không thể bypass bằng kubectl**
+
+---
+
+## 🧠 Tư duy thiết kế bắt buộc
+
+* Security **không dựa vào con người**
+* Mọi policy:
+
+  * phải declarative
+  * phải reconcile liên tục
+
+---
+
+## 🧩 Task Breakdown — Sprint 2
+
+### 🔹 Task 2.1 — NetworkPolicy templates
+
+**Logic**
+
+* Nếu `isolation=Strict`
+  → tạo NetworkPolicy deny-all ingress + egress
+
+**Bắt buộc**
+
+* Controller **Owns NetworkPolicy**
+
+**Checklist**
+
+* Pod khác namespace không thể ping
+* Sửa tay NetworkPolicy → bị revert
+
+---
+
+### 🔹 Task 2.2 — ResourceQuota theo Tier
+
+**Mapping ví dụ**
+
+| Tier   | CPU | Memory |
+| ------ | --- | ------ |
+| Gold   | 10  | 32Gi   |
+| Silver | 4   | 8Gi    |
+
+**Checklist**
+
+* Pod vượt quota → bị reject
+* Đổi tier → quota được update
+
+---
+
+### 🔹 Task 2.3 — RBAC từ spec.owners
+
+**Logic**
+
+* `owners` → `subjects`
+* Tạo RoleBinding trong namespace
+
+**Checklist**
+
+* Owner deploy được pod
+* User khác → bị forbidden
+
+---
+
+### 🔹 Task 2.4 — Integration Tests (KinD)
+
+**Scenario test**
+
+1. Tạo Tenant
+2. Deploy pod từ owner → OK
+3. Pod từ namespace khác → FAIL
+4. Edit NetworkPolicy → revert
+
+---
+
+## ✅ Acceptance Criteria — Sprint 2
+
+* ✅ isolation=Strict → deny-all network policy
+* ✅ Owner có quyền admin namespace
+* ✅ Namespace khác không truy cập được
+* ✅ Drift bị sửa tự động
+
+---
+
+## ⚠️ Anti-patterns Sprint 2
+
+* ❌ Không Owns NetworkPolicy
+* ❌ Hardcode RBAC
+* ❌ Không test phá hoại
+
+---
+
+---
+
+## 🟩 Sprint 3 — Developer Experience & Hardening
+
+**Thời gian:** 2 tuần
+**Chủ đề:** *Adoption & Production readiness*
+
+---
+
+## 🎯 Mục tiêu Sprint 3
+
+* Dev **muốn dùng platform**
+* Có CI/CD chuẩn
+* Có docs + ADR
+* Có E2E test
+
+---
+
+## 🧩 Task Breakdown — Sprint 3
+
+### 🔹 Task 3.1 — Build `shieldctl` CLI
+
+**Commands**
+
+```bash
+shieldctl create tenant
+shieldctl status tenant
+shieldctl delete tenant
+```
+
+**Logic**
+
+* CLI gọi Kubernetes API
+* Không gọi controller trực tiếp
+
+---
+
+### 🔹 Task 3.2 — Status & UX
+
+**Tenant.status**
+
+* Phase: Pending → Ready
+* Conditions từng bước
+
+**CLI UX**
+
+* Spinner
+* Emoji / màu
+* Progress rõ ràng
+
+---
+
+### 🔹 Task 3.3 — CI Pipeline
+
+**Pipeline**
+
+* Build controller image
+* Run unit tests
+* Spin KinD
+* Run E2E
+
+---
+
+### 🔹 Task 3.4 — Documentation & ADR
+
+**Docs**
+
+* README
+* Onboarding guide
+* Architecture diagram
+
+**ADR**
+
+* Vì sao dùng CRD
+* Vì sao không dùng Terraform
+
+---
+
+## ✅ Acceptance Criteria — Sprint 3
+
+* ✅ Dev chạy CLI thấy tenant READY
+* ✅ CI pass khi PR merge
+* ✅ E2E test chạy được
+* ✅ Có tài liệu onboard
+
+---
+
+## 🎯 Tổng kết
+
+Nếu hoàn thành đủ 3 Sprint này, bạn **không chỉ học Kubernetes Operator**.
+
+Bạn đã chứng minh được khả năng:
+
+* Thiết kế **Internal Developer Platform**
+* Áp dụng **Controller Pattern chuẩn**
+* Xây **Security-first multi-tenant system**
+
+👉 Đây là level **Senior / Staff Platform Engineer** thật sự.
+
+ 
 
 ---
 
