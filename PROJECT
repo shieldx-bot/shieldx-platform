@@ -8,4 +8,18 @@ layout:
 - go.kubebuilder.io/v4
 projectName: shieldx-platform
 repo: github.com/shieldx-bot/shieldx-platform
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: shieldx.io
+  group: platform
+  kind: Tenant
+  path: github.com/shieldx-bot/shieldx-platform/api/v1alpha1
+  version: v1alpha1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
 version: "3"
