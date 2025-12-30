@@ -20,6 +20,47 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type ResourceQuota struct {
+	// Limits the total amount of CPU resources that can be requested by all Pods in a namespace.
+	// +optional
+	RequestsCPU string `json:"requestsCPU,omitempty"`
+	// Limits the total amount of memory resources that can be requested by all Pods in a namespace.
+	// +optional
+	RequestsMemory string `json:"requestsMemory,omitempty"`
+	// Limits the total amount of CPU resources that can be used by all Pods in a namespace.
+	// +optional
+	LimitsCPU string `json:"limitsCPU,omitempty"`
+	// Limits the total amount of memory resources that can be used by all Pods in a namespace.
+	// +optional
+	LimitsMemory string `json:"limitsMemory,omitempty"`
+
+	RequestsStorage string `json:"requestsStorage,omitempty"`
+	// Limits the number of Pods that can be created in a namespace.
+	// +optional
+
+	Pods string `json:"pods,omitempty"`
+}
+
+// NetworkPolicyPeer is a simplified selector for a peer Pod.
+// NOTE: This is NOT the full Kubernetes NetworkPolicyPeer model.
+// It only supports selecting Pods by labels ("pod"), implicitly within the same namespace.
+type NetworkPolicyPeer struct {
+	Pod map[string]string `json:"pod,omitempty"`
+}
+type NetworkPolicyEgressRule struct {
+	To NetworkPolicyPeer `json:"to,omitempty"`
+}
+type NetworkPolicyIngressRule struct {
+	From NetworkPolicyPeer `json:"from,omitempty"`
+}
+
+type NetworkPolicy struct {
+	PodSelector map[string]string          `json:"podSelector,omitempty"`
+	PolicyTypes []string                   `json:"policyTypes,omitempty"`
+	Ingress     []NetworkPolicyIngressRule `json:"ingress,omitempty"`
+	Egress      []NetworkPolicyEgressRule  `json:"egress,omitempty"`
+}
+
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
@@ -29,8 +70,10 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	Owners []string `json:"owners"`
 
-	Tier      string `json:"tier"`
-	Isolation string `json:"isolation"`
+	Tier          string `json:"tier"`
+	Isolation     string `json:"isolation"`
+	NetworkPolicy `json:"networkPolicy,omitempty"`
+	ResourceQuota `json:"resourceQuota,omitempty"`
 }
 
 // TenantStatus defines the observed state of Tenant.
