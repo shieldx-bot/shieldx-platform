@@ -1,0 +1,83 @@
+# Vai trò và RoleBinding để cho phép controller-manager đọc Pods trong namespace shieldx-platform-system
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: shieldx-platform-controller-manager-pod-reader
+  namespace: shieldx-platform-system
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+# RoleBinding để gán vai trò cho ServiceAccount của controller-manager
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shieldx-platform-controller-manager-pod-reader
+  namespace: shieldx-platform-system
+subjects:
+  - kind: ServiceAccount
+    name: shieldx-platform-controller-manager
+    namespace: shieldx-platform-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: shieldx-platform-controller-manager-pod-reader
+---
+# ClusterRole và ClusterRoleBinding để cho phép controller-manager quản lý namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: shieldx-platform-controller-manager-namespace-admin
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# ClusterRoleBinding để gán ClusterRole cho ServiceAccount của controller-manager
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: shieldx-platform-controller-manager-namespace-admin
+subjects:
+  - kind: ServiceAccount
+    name: shieldx-platform-controller-manager
+    namespace: shieldx-platform-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: shieldx-platform-controller-manager-namespace-admin
+---
+# ClusterRole và ClusterRoleBinding để cho phép controller-manager quản lý tài nguyên trong tất cả các namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: shieldx-platform-controller-manager-tenant-admin
+rules:
+  # Namespaces (cluster-scope)
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+  # ResourceQuota + Secrets (namespaced)
+  - apiGroups: [""]
+    resources: ["resourcequotas", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # NetworkPolicy (namespaced)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: shieldx-platform-controller-manager-tenant-admin
+subjects:
+  - kind: ServiceAccount
+    name: shieldx-platform-controller-manager
+    namespace: shieldx-platform-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: shieldx-platform-controller-manager-tenant-admin
