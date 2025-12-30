@@ -76,7 +76,10 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
+	// Webhook cert flags have had slightly different names across scaffold versions.
+	// Accept common aliases to avoid crashloops caused by unknown flags (flag.Parse exits with code 2).
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
+	flag.StringVar(&webhookCertPath, "webhook-cert-dir", "", "(DEPRECATED) Alias for --webhook-cert-path.")
 	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
 	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
 	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
@@ -197,6 +200,7 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Tenant")
 			os.Exit(1)
 		}
+
 	}
 	// +kubebuilder:scaffold:builder
 
