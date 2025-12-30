@@ -1,0 +1,12 @@
+apiVersion: platform.shieldx.io/v1alpha1
+kind: Tenant
+metadata:
+  labels:
+    app.kubernetes.io/name: shieldx-platform
+    app.kubernetes.io/managed-by: kustomize
+  name: tenant-sample
+spec:
+  owners:
+    - admin@example.com
+  tier: basic
+  isolation: namespace
