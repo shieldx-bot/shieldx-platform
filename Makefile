@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= shieldxbot/controller:v0.0.3
+IMG ?= shieldxbot/controller:v0.0.14
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -119,13 +119,13 @@ run: manifests generate fmt vet ## Run a controller from your host.
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 	$(CONTAINER_TOOL) push ${IMG}
-	echo "-------------------build success--------------------"
-	$(KUBECTL) -n shieldx-platform-system rollout restart deployment/shieldx-platform-controller-manager
 	make deploy
-	echo "-------------------rollout success------------------"
-	kubectl delete pod -n shieldx-platform-system myapp  --ignore-not-found=true
-	echo "-------------------delete pod nginx ------------------"
-	kubectl apply -f  /home/shieldx/Documents/GitHub/shieldx-platform/setup/webhook/test/pod.yaml
+# 	echo "-------------------build success--------------------"
+# 	$(KUBECTL) -n shieldx-platform-system rollout restart deployment/shieldx-platform-controller-manager
+# 	kubectl rollout restart deploy/shieldx-platform-controller-manager -n shieldx-platform-system
+# # 	echo "-------------------rollout success------------------"
+# 	kubectl delete pod -n shieldx-platform-system myapp  --ignore-not-found=true
+ # 	kubectl apply -f  /home/shieldx/Documents/GitHub/shieldx-platform/setup/webhook/test/pod.yaml
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
@@ -173,11 +173,8 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
-	# NOTE: Keep deploy idempotent; don't fail on missing dev-only test pods.
-	-kubectl delete pod -n shieldx-platform-system myapp --ignore-not-found=true
-	# Optional dev smoke-test pod (uncomment if you really want it)
-	# kubectl apply -f setup/webhook/test/pod.yaml
-
+  	# Optional dev smoke-test pod (uncomment if you really want it)
+ 
 .PHONY: webhook-status
 webhook-status: ## Print controller/webhook resources and recent webhook-related logs.
 	@NS=shieldx-platform-system; \
@@ -196,25 +193,58 @@ webhook-status: ## Print controller/webhook resources and recent webhook-related
 		echo "No controller-manager pod found"; \
 	fi
 
+.PHONY: webhook-unblock
+webhook-unblock: ## Temporarily set failurePolicy=Ignore to unblock kubectl apply when webhook is unreachable (DEV ONLY).
+	@set -e; \
+	MWH=shieldx-platform-mutating-webhook-configuration; \
+	VWH=shieldx-platform-validating-webhook-configuration; \
+	echo "Patching $$MWH failurePolicy=Ignore"; \
+	$(KUBECTL) patch mutatingwebhookconfiguration $$MWH --type='json' \
+		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'; \
+	echo "Patching $$VWH failurePolicy=Ignore"; \
+	$(KUBECTL) patch validatingwebhookconfiguration $$VWH --type='json' \
+		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'; \
+	echo "Done. Remember to run 'make webhook-block' after webhook connectivity is fixed."
+
+.PHONY: webhook-block
+webhook-block: ## Restore failurePolicy=Fail (recommended for production enforcement).
+	@set -e; \
+	MWH=shieldx-platform-mutating-webhook-configuration; \
+	VWH=shieldx-platform-validating-webhook-configuration; \
+	echo "Restoring $$MWH failurePolicy=Fail"; \
+	$(KUBECTL) patch mutatingwebhookconfiguration $$MWH --type='json' \
+		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]'; \
+	echo "Restoring $$VWH failurePolicy=Fail"; \
+	$(KUBECTL) patch validatingwebhookconfiguration $$VWH --type='json' \
+		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]';
+
 .PHONY: webhook-smoke
 webhook-smoke: ## Server-side dry-run to verify admission webhooks (TLS + reachability + validation).
 	@set -e; \
 	echo "## Valid Tenant (should succeed)"; \
-	cat <<-'YAML' | $(KUBECTL) apply --dry-run=server -f -
-	apiVersion: platform.shieldx.io/v1alpha1
-	kind: Tenant
-	metadata:
-	  name: tenant-webhook-smoketest
-	spec:
-	  owners:
-	    - admin@example.com
-	  tier: basic
-	  isolation: namespace
-	YAML
-	@echo; echo "## Invalid Tenant (should fail validation, not TLS/timeout)"; \
+	printf '%s\n' \
+	  'apiVersion: platform.shieldx.io/v1alpha1' \
+	  'kind: Tenant' \
+	  'metadata:' \
+	  '  name: tenant-webhook-smoketest' \
+	  'spec:' \
+	  '  owners:' \
+	  '    - admin@example.com' \
+	  '  tier: basic' \
+	  '  isolation: namespace' \
+	| $(KUBECTL) apply --dry-run=server -f -; \
+	echo; echo "## Invalid Tenant (should fail validation, not TLS/timeout)"; \
 	TMP=$$(mktemp); \
 	set +e; \
-	cat <<-'YAML' | $(KUBECTL) apply --dry-run=server -f - 2>&1 | tee $$TMP; \
+	printf '%s\n' \
+	  'apiVersion: platform.shieldx.io/v1alpha1' \
+	  'kind: Tenant' \
+	  'metadata:' \
+	  '  name: tenant-webhook-should-fail' \
+	  'spec:' \
+	  '  tier: basic' \
+	  '  isolation: namespace' \
+	| $(KUBECTL) apply --dry-run=server -f - 2>&1 | tee $$TMP; \
 	RC=$$?; \
 	set -e; \
 	if [ $$RC -eq 0 ]; then \
@@ -222,21 +252,13 @@ webhook-smoke: ## Server-side dry-run to verify admission webhooks (TLS + reacha
 		rm -f $$TMP; \
 		exit 1; \
 	fi; \
-	if egrep -qi 'failed calling webhook|x509|tls:|timeout' $$TMP; then \
+	if egrep -qi 'failed calling webhook|x509|tls:|timeout|no endpoints available' $$TMP; then \
 		echo; echo "ERROR: Failure looks like webhook connectivity/TLS, not a validation error."; \
 		rm -f $$TMP; \
 		exit 1; \
 	fi; \
 	rm -f $$TMP; \
 	echo; echo "OK: Invalid Tenant failed validation as expected."
-	apiVersion: platform.shieldx.io/v1alpha1
-	kind: Tenant
-	metadata:
-	  name: tenant-webhook-should-fail
-	spec:
-	  tier: basic
-	  isolation: namespace
-	YAML
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
