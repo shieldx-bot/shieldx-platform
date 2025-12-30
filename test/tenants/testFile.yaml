@@ -1,0 +1,9 @@
+apiVersion: platform.shieldx.io/v1alpha1
+kind: Tenant
+metadata:
+  name: payment-team
+spec:
+  owners:
+    - "owner@shieldx.io"
+  tier: "Gold"
+  isolation: "Strict"
