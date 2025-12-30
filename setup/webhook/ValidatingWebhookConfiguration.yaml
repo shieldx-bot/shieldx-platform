@@ -1,0 +1,39 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: shieldx-platform-validating-webhook-configuration # đổi tên để tránh trùng với config/webhook/manifests.yaml
+  annotations:
+    # Inject CA bundle from the same Certificate that backs the webhook server TLS secret
+    # (see: kubectl -n shieldx-platform-system get certificate)
+    cert-manager.io/inject-ca-from: shieldx-platform-system/signed-image-webhook-cert
+webhooks:
+  - name: vtenant-v1alpha1.kb.io # lấy ở config/webhook/manifests.yaml
+    rules:
+      - apiGroups: ["platform.shieldx.io"] # lấy ở config/webhook/manifests.yaml
+        apiVersions: ["v1alpha1"] # lấy ở config/webhook/manifests.yaml
+        operations: ["CREATE", "UPDATE"]
+        resources: ["tenants"] # lấy ở config/webhook/manifests.yaml
+
+    # Exclude namespace chạy webhook để tránh bootstrap deadlock
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name # đổi namespace cho đúng
+          operator: NotIn
+          values:
+            - shieldx-platform-system # đổi namespace cho đúng
+        # (tuỳ chọn) opt-in theo label namespace để không enforce toàn cluster
+        # - key: shieldx.io/webhooks
+        #   operator: In
+        #   values: ["enabled"]
+
+    clientConfig:
+      service:
+        name: shieldx-platform-webhook-service # đổi tên service cho đúng
+        namespace: shieldx-platform-system # đổi namespace cho đúng
+        path: /validate-platform-shieldx-io-v1alpha1-tenant # Lấy ở  config/webhook/manifests.yaml
+        port: 443
+      caBundle: ""
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    timeoutSeconds: 15
