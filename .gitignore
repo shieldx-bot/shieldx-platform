@@ -30,3 +30,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+cmd/shieldctl/html.htm
+setup/env/cosign-pub-key-secret.yaml
+setup/env/telegram-credentials-secret.yaml

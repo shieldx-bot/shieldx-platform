@@ -11,8 +11,11 @@ import (
 	"github.com/shieldx-bot/shieldx-platform/internal/webhook/notify"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -224,11 +227,7 @@ func CreateReconciliation(Name string, Tier string, Isolation string, Owners []s
 	}
 
 	tenantlog.Info("Secret created for owners", "name", Name)
-	// dynamicClient, err := dynamic.NewForConfig(config)
-	// if err != nil {
-	// 	fmt.Println("Lỗi tạo dynamic client:", err)
-	// 	return err
-	// }
+
 	Pods, err := clientset.CoreV1().Pods("shieldx-platform-system").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		fmt.Println("Lỗi liệt kê nodes:", err)
@@ -244,43 +243,91 @@ func CreateReconciliation(Name string, Tier string, Isolation string, Owners []s
 		}
 	}
 
-	// Thêm logic tái cấu hình ở đây sử dụng clientset và dynamicClient nếu cần.
 	return nil
 
 }
 
 func DeleleteReconciliation(Name string) error {
-	clientset, _, err := GetClientset()
+	clientset, config, err := GetClientset()
 	if err != nil {
 		fmt.Printf("Lỗi khi lấy clientset: %v\n", err)
 		return err
 	}
-	// Delete Namespace
-	err = clientset.CoreV1().Namespaces().Delete(context.TODO(), "tenant-"+Name, metav1.DeleteOptions{})
-	if err != nil {
-		err := notify.SendMessageTelegram("Lỗi khi xóa Namespace: " + err.Error())
-		fmt.Printf("Lỗi khi xóa Namespace: %v\n", err)
-		return err
-	}
-	tenantlog.Info("Namespace deleted", "name", Name)
-	DeleteResourceQuota := clientset.CoreV1().ResourceQuotas("tenant-" + Name)
-	err = DeleteResourceQuota.Delete(context.TODO(), "tenant-resource-quota", metav1.DeleteOptions{})
-	if err != nil {
-		err := notify.SendMessageTelegram("Lỗi khi xóa ResourceQuota: " + err.Error())
-		fmt.Printf("Lỗi khi xóa ResourceQuota: %v\n", err)
-		return err
-	}
-	tenantlog.Info("ResourceQuota deleted", "name", Name)
 
-	DeleteNetworkPolicy := clientset.NetworkingV1().NetworkPolicies("tenant-" + Name)
-	err = DeleteNetworkPolicy.Delete(context.TODO(), "tenant-network-policy", metav1.DeleteOptions{})
+	ctx := context.TODO()
+	tenantGVR := schema.GroupVersionResource{
+		Group:    "platform.shieldx.io",
+		Version:  "v1alpha1",
+		Resource: "tenants",
+	}
+
+	dc, err := dynamic.NewForConfig(config)
 	if err != nil {
-		err := notify.SendMessageTelegram("Lỗi khi xóa NetworkPolicy: " + err.Error())
-		fmt.Printf("Lỗi khi xóa NetworkPolicy: %v\n", err)
+		fmt.Println("Lỗi tạo dynamic client:", err)
 		return err
 	}
-	tenantlog.Info("NetworkPolicy deleted", "name", Name)
 
-	// Thêm logic xóa tái cấu hình ở đây sử dụng clientset nếu cần.
+	// Tenants may be namespaced; detect the namespace by listing and matching by name.
+	var tenantCRNamespace string
+
+	// Try cluster-scoped list first; if that fails (common for namespaced CRDs), fallback to list across all namespaces.
+	tenantList, listErr := dc.Resource(tenantGVR).List(ctx, metav1.ListOptions{})
+	if listErr != nil {
+		tenantList, listErr = dc.Resource(tenantGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	}
+	if listErr == nil {
+		for i := range tenantList.Items {
+			if tenantList.Items[i].GetName() == Name {
+				tenantCRNamespace = tenantList.Items[i].GetNamespace()
+				break
+			}
+		}
+	}
+
+	var tenantRes dynamic.ResourceInterface = dc.Resource(tenantGVR)
+	if tenantCRNamespace != "" {
+		tenantRes = dc.Resource(tenantGVR).Namespace(tenantCRNamespace)
+	}
+
+	// Best-effort remove finalizers (common cause of "cannot delete" / stuck deletion).
+	if u, getErr := tenantRes.Get(ctx, Name, metav1.GetOptions{}); getErr == nil {
+		if len(u.GetFinalizers()) > 0 {
+			u.SetFinalizers(nil)
+			_, _ = tenantRes.Update(ctx, u, metav1.UpdateOptions{})
+		}
+	}
+
+	// Delete the Tenant CR (ignore NotFound).
+	if err := tenantRes.Delete(ctx, Name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		_ = notify.SendMessageTelegram("Lỗi khi xóa Tenant: " + err.Error())
+		return fmt.Errorf("failed to delete Tenant %q: %w", Name, err)
+	}
+
+	tenantNS := "tenant-" + Name
+
+	// Best-effort delete in-namespace resources.
+	if err := clientset.NetworkingV1().NetworkPolicies(tenantNS).Delete(ctx, "tenant-network-policy", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		_ = notify.SendMessageTelegram("Lỗi khi xóa NetworkPolicy: " + err.Error())
+		return fmt.Errorf("failed to delete NetworkPolicy %s/%s: %w", tenantNS, "tenant-network-policy", err)
+	}
+
+	if err := clientset.CoreV1().ResourceQuotas(tenantNS).Delete(ctx, "tenant-resource-quota", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		_ = notify.SendMessageTelegram("Lỗi khi xóa ResourceQuota: " + err.Error())
+		return fmt.Errorf("failed to delete ResourceQuota %s/%s: %w", tenantNS, "tenant-resource-quota", err)
+	}
+
+	if err := clientset.CoreV1().Secrets(tenantNS).Delete(ctx, "owners", metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		_ = notify.SendMessageTelegram("Lỗi khi xóa Secret owners: " + err.Error())
+		return fmt.Errorf("failed to delete Secret %s/%s: %w", tenantNS, "owners", err)
+	}
+
+	// Best-effort delete tenant namespace.
+	if err := clientset.CoreV1().Namespaces().Delete(ctx, tenantNS, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		_ = notify.SendMessageTelegram("Lỗi khi xóa Namespace: " + err.Error())
+		return fmt.Errorf("failed to delete namespace %q: %w", tenantNS, err)
+	}
+
+	tenantlog.Info("Reconciliation deleted", "name", Name)
+	fmt.Println("Xóa tái cấu hình thành công")
 	return nil
 }

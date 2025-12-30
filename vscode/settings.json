@@ -1,0 +1,101 @@
+{
+    // -----------------------------------------------
+    // ShieldX Platform — VS Code settings (low resource)
+    // Goal: reduce CPU/RAM/IO while keeping Go dev UX solid.
+    // This file is JSONC (comments allowed).
+    // -----------------------------------------------
+    // ---------- Core performance & noise reduction ----------
+    "telemetry.telemetryLevel": "off",
+    "update.mode": "manual",
+    "extensions.autoUpdate": false,
+    "extensions.autoCheckUpdates": false,
+    "editor.minimap.enabled": false,
+    "breadcrumbs.enabled": false,
+    "editor.codeLens": false,
+    "editor.inlayHints.enabled": "off",
+    // Avoid expensive watcher churn on generated/binary/vendor-like dirs.
+    "files.watcherExclude": {
+        "**/.git/**": true,
+        "**/bin/**": true,
+        "**/vendor/**": true,
+        "**/node_modules/**": true,
+        "**/dist/**": true,
+        "**/coverage/**": true,
+        "**/.cache/**": true,
+        "**/tmp/**": true
+    },
+    "search.exclude": {
+        "**/.git/**": true,
+        "**/bin/**": true,
+        "**/vendor/**": true,
+        "**/node_modules/**": true,
+        "**/dist/**": true,
+        "**/coverage/**": true,
+        "**/.cache/**": true,
+        "**/tmp/**": true
+    },
+    "files.exclude": {
+        "**/bin": true
+    },
+    // Git: disable background fetch to reduce periodic spikes.
+    "git.autofetch": false,
+    // ---------- Go extension: minimize background work ----------
+    "go.useLanguageServer": true,
+    "go.toolsManagement.autoUpdate": false,
+    "go.lintOnSave": "off",
+    "go.vetOnSave": "off",
+    "go.testOnSave": "off",
+    "go.buildOnSave": "off",
+    // Format only for Go files (fast and keeps codebase consistent).
+    "[go]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "golang.go"
+    },
+    "[go.mod]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "golang.go"
+    },
+    "[go.sum]": {
+        "editor.formatOnSave": false
+    },
+    // ---------- gopls: tuned for lower memory/CPU ----------
+    "gopls": {
+        // Reduce RAM: aggressively drop state for closed files.
+        "memoryMode": "DegradeClosed",
+        // Keep expensive checks off by default (can be enabled per-user).
+        "staticcheck": false,
+        "semanticTokens": false,
+        // Keep only the essentials; disable heavier/controversial analyses.
+        "analyses": {
+            "unusedparams": false,
+            "unusedwrite": false,
+            "fieldalignment": false
+        },
+        // Avoid scanning irrelevant directories.
+        "directoryFilters": [
+            "-bin"
+        ],
+        // CodeLens can be surprisingly expensive in big repos.
+        "codelenses": {
+            "generate": false,
+            "gc_details": false,
+            "test": false,
+            "tidy": false,
+            "upgrade_dependency": false,
+            "vendor": false
+        },
+        // Reduce completion work a bit.
+        "completeUnimported": false,
+        "usePlaceholders": true,
+        // Disable inlay-style hints from gopls side as well.
+        "hints": {
+            "assignVariableTypes": false,
+            "compositeLiteralFields": false,
+            "compositeLiteralTypes": false,
+            "constantValues": false,
+            "functionTypeParameters": false,
+            "parameterNames": false,
+            "rangeVariableTypes": false
+        }
+    }
+}

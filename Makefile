@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= shieldxbot/controller:v0.0.14
+IMG ?= shieldxbot/controller:v0.0.17
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -120,6 +120,9 @@ docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 	$(CONTAINER_TOOL) push ${IMG}
 	make deploy
+	go build -o ~/go/bin/shieldctl  ./cmd/shieldctl
+	echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
+# 	echo "-------------------docker build success--------------------"
 # 	echo "-------------------build success--------------------"
 # 	$(KUBECTL) -n shieldx-platform-system rollout restart deployment/shieldx-platform-controller-manager
 # 	kubectl rollout restart deploy/shieldx-platform-controller-manager -n shieldx-platform-system
