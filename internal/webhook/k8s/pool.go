@@ -14,8 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -79,6 +77,7 @@ func CreateSecret(clientset *kubernetes.Clientset, namespace string, name string
 }
 
 func CreateResource(clientset *kubernetes.Clientset, namespace string, resourceQuota platformv1alpha1.ResourceQuota) error {
+
 	limitsCPU, err := resource.ParseQuantity(resourceQuota.LimitsCPU)
 	if err != nil {
 		return fmt.Errorf("invalid LimitsCPU %q: %w", resourceQuota.LimitsCPU, err)
@@ -248,60 +247,18 @@ func CreateReconciliation(Name string, Tier string, Isolation string, Owners []s
 }
 
 func DeleleteReconciliation(Name string) error {
-	clientset, config, err := GetClientset()
+	clientset, _, err := GetClientset()
 	if err != nil {
 		fmt.Printf("Lỗi khi lấy clientset: %v\n", err)
 		return err
 	}
 
 	ctx := context.TODO()
-	tenantGVR := schema.GroupVersionResource{
-		Group:    "platform.shieldx.io",
-		Version:  "v1alpha1",
-		Resource: "tenants",
-	}
-
-	dc, err := dynamic.NewForConfig(config)
-	if err != nil {
-		fmt.Println("Lỗi tạo dynamic client:", err)
-		return err
-	}
-
-	// Tenants may be namespaced; detect the namespace by listing and matching by name.
-	var tenantCRNamespace string
-
-	// Try cluster-scoped list first; if that fails (common for namespaced CRDs), fallback to list across all namespaces.
-	tenantList, listErr := dc.Resource(tenantGVR).List(ctx, metav1.ListOptions{})
-	if listErr != nil {
-		tenantList, listErr = dc.Resource(tenantGVR).Namespace(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
-	}
-	if listErr == nil {
-		for i := range tenantList.Items {
-			if tenantList.Items[i].GetName() == Name {
-				tenantCRNamespace = tenantList.Items[i].GetNamespace()
-				break
-			}
-		}
-	}
-
-	var tenantRes dynamic.ResourceInterface = dc.Resource(tenantGVR)
-	if tenantCRNamespace != "" {
-		tenantRes = dc.Resource(tenantGVR).Namespace(tenantCRNamespace)
-	}
-
-	// Best-effort remove finalizers (common cause of "cannot delete" / stuck deletion).
-	if u, getErr := tenantRes.Get(ctx, Name, metav1.GetOptions{}); getErr == nil {
-		if len(u.GetFinalizers()) > 0 {
-			u.SetFinalizers(nil)
-			_, _ = tenantRes.Update(ctx, u, metav1.UpdateOptions{})
-		}
-	}
-
-	// Delete the Tenant CR (ignore NotFound).
-	if err := tenantRes.Delete(ctx, Name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
-		_ = notify.SendMessageTelegram("Lỗi khi xóa Tenant: " + err.Error())
-		return fmt.Errorf("failed to delete Tenant %q: %w", Name, err)
-	}
+	// IMPORTANT:
+	// This function is invoked from the validating webhook's ValidateDelete.
+	// Do NOT delete or update the Tenant CR here, otherwise it will trigger the validating webhook again
+	// (recursive admission) and eventually time out.
+	// The Tenant CR deletion should be performed by the original DELETE request (kubectl/shieldctl).
 
 	tenantNS := "tenant-" + Name
 

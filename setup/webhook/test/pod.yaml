@@ -34,6 +34,8 @@ spec:
           pod:
             app: db
             tenant: payment
+# kubectl get  tenant
+# kubectl describe  tenant payment-team
 # kubectl describe ns tenant-payment-team
 # kubectl delete ns tenant-payment-team
 # kubectl get networkpolicy -n tenant-payment-team

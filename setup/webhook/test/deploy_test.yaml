@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-test
+  namespace: webhook-test
+  labels:
+    app: nginx-test
+spec:
+  containers:
+    - name: nginx
+      image: shieldxbot/backend_example:v1.0.0
+      ports:
+        - containerPort: 80
