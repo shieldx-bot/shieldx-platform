@@ -1,11 +1,16 @@
 # Image URL to use all building/pushing image targets
-IMG ?= shieldxbot/controller:v0.0.19
+IMG ?= shieldxbot/controller:v0.0.20
 
-# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
-ifeq (,$(shell go env GOBIN))
-GOBIN=$(shell go env GOPATH)/bin
-else
-GOBIN=$(shell go env GOBIN)
+# Go toolchain discovery (safe: does not modify your shell profile)
+#
+# This repo needs the `go` binary for controller-gen (loading packages), codegen, fmt/vet, tests, etc.
+# Some environments install Go under /usr/local/go/bin but do not add it to $PATH.
+GO ?= $(shell command -v go 2>/dev/null)
+ifeq ($(GO),)
+	ifneq ($(wildcard /usr/local/go/bin/go),)
+		GO := /usr/local/go/bin/go
+		export PATH := /usr/local/go/bin:$(PATH)
+	endif
 endif
 
 # CONTAINER_TOOL defines the container tool to be used for building images.
@@ -41,25 +46,37 @@ help: ## Display this help.
 
 ##@ Development
 
+.PHONY: check-go
+check-go: ## Verify that the Go toolchain is available.
+	@command -v go >/dev/null 2>&1 || [ -x "/usr/local/go/bin/go" ] || { \
+		echo "Error: Go toolchain not found in PATH."; \
+		echo "  Detected common install path: /usr/local/go/bin/go (missing from PATH in your shell)."; \
+		echo "  Fix options:"; \
+		echo "    - Install Go (recommended), or"; \
+		echo "    - Add /usr/local/go/bin to your PATH (shell profile), or"; \
+		echo "    - Run make with PATH=\"/usr/local/go/bin:$$PATH\""; \
+		exit 1; \
+	}
+
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: check-go controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
-generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: check-go controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
-	go fmt ./...
+	$(GO) fmt ./...
 
 .PHONY: vet
 vet: ## Run go vet against code.
-	go vet ./...
+	$(GO) vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+test: check-go manifests generate fmt vet setup-envtest ## Run tests.
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" $(GO) test $$($(GO) list ./... | grep -v /e2e) -coverprofile cover.out
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
@@ -82,8 +99,8 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 	esac
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+test-e2e: check-go setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) $(GO) test -tags=e2e ./test/e2e/ -v -ginkgo.v
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
@@ -106,11 +123,30 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
+	$(GO) build -o bin/manager cmd/main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
+	$(GO) run ./cmd/main.go
+
+.PHONY: shieldctl
+shieldctl: check-go ## Build shieldctl CLI into ./bin (does not install).
+	$(GO) build -o bin/shieldctl ./cmd/shieldctl
+
+.PHONY: install-shieldctl
+install-shieldctl: shieldctl ## Install shieldctl to GOBIN (or GOPATH/bin). Refuses to overwrite unless FORCE=1.
+	@set -e; \
+	GOBIN="$$($(GO) env GOBIN)"; \
+	if [ -z "$$GOBIN" ]; then GOBIN="$$($(GO) env GOPATH)/bin"; fi; \
+	DST="$$GOBIN/shieldctl"; \
+	if [ -e "$$DST" ] && [ "$(FORCE)" != "1" ]; then \
+		echo "Refusing to overwrite existing $$DST"; \
+		echo "Re-run with FORCE=1 to overwrite, or remove the existing file."; \
+		exit 1; \
+	fi; \
+	mkdir -p "$$GOBIN"; \
+	install -m 0755 bin/shieldctl "$$DST"; \
+	echo "Installed shieldctl -> $$DST"
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -120,8 +156,8 @@ docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 	$(CONTAINER_TOOL) push ${IMG}
 	make deploy
-	go build -o ~/go/bin/shieldctl  ./cmd/shieldctl
-	echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
+# 	go build -o ~/go/bin/shieldctl  ./cmd/shieldctl
+# 	echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
 # 	echo "-------------------docker build success--------------------"
 # 	echo "-------------------build success--------------------"
 # 	$(KUBECTL) -n shieldx-platform-system rollout restart deployment/shieldx-platform-controller-manager
@@ -298,12 +334,12 @@ ENVTEST_K8S_VERSION ?= $(shell v='$(call gomodver,k8s.io/api)'; \
 
 GOLANGCI_LINT_VERSION ?= v2.5.0
 .PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
+kustomize: check-go $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
 
 .PHONY: controller-gen
-controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
+controller-gen: check-go $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
 $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
 
@@ -316,12 +352,12 @@ setup-envtest: envtest ## Download the binaries required for ENVTEST in the loca
 	}
 
 .PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
+envtest: check-go $(ENVTEST) ## Download setup-envtest locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
+golangci-lint: check-go $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
