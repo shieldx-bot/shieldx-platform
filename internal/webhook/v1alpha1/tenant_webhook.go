@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	platformv1alpha1 "github.com/shieldx-bot/shieldx-platform/api/v1alpha1"
-	"github.com/shieldx-bot/shieldx-platform/internal/webhook/k8s"
 	"github.com/shieldx-bot/shieldx-platform/internal/webhook/notify"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -99,11 +98,11 @@ func (v *TenantCustomValidator) ValidateCreate(_ context.Context, obj runtime.Ob
 		tenantlog.Error(err0, "failed to send Telegram notification", "tenant", tenant.GetName())
 	}
 
-	err := k8s.CreateReconciliation(tenant.GetName(), tenant.Spec.Tier, tenant.Spec.Isolation, tenant.Spec.Owners, tenant.Spec.ResourceQuota, tenant.Spec.NetworkPolicy)
-	if err != nil {
-		tenantlog.Error(err, "failed to create reconciliation", "tenant", tenant.GetName())
-		return nil, err
-	}
+	// err := k8s.CreateReconciliation(tenant.GetName(), tenant.Spec.Tier, tenant.Spec.Isolation, tenant.Spec.Owners, tenant.Spec.ResourceQuota, tenant.Spec.NetworkPolicy)
+	// if err != nil {
+	// 	tenantlog.Error(err, "failed to create reconciliation", "tenant", tenant.GetName())
+	// 	return nil, err
+	// }
 
 	tenantlog.Info("Validation for Tenant upon creation", "name", tenant.GetName())
 
@@ -136,11 +135,11 @@ func (v *TenantCustomValidator) ValidateDelete(ctx context.Context, obj runtime.
 		// Don't block the admission request if Telegram is down/misconfigured.
 		tenantlog.Error(err1, "failed to send Telegram notification", "tenant", tenant.GetName())
 	}
-	err := k8s.DeleleteReconciliation(tenant.GetName())
-	if err != nil {
-		tenantlog.Error(err, "failed to delete reconciliation", "tenant", tenant.GetName())
-		return nil, err
-	}
+	// err := k8s.DeleleteReconciliation(tenant.GetName())
+	// if err != nil {
+	// 	tenantlog.Error(err, "failed to delete reconciliation", "tenant", tenant.GetName())
+	// 	return nil, err
+	// }
 	tenantlog.Info("Validation for Tenant upon deletion", "name", tenant.GetName())
 
 	// TODO(user): fill in your validation logic upon object deletion.
