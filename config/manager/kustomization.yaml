@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: shieldxbot/controller
-  newTag: 5aeff0e
+  newTag: v0.0.20
