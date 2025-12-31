@@ -23,17 +23,19 @@ import (
 	"strings"
 	"time"
 
+	platformv1alpha1 "github.com/shieldx-bot/shieldx-platform/api/v1alpha1"
+	"github.com/shieldx-bot/shieldx-platform/internal/webhook/notify"
+	"github.com/shieldx-bot/shieldx-platform/internal/webhook/verifyimage"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-
-	platformv1alpha1 "github.com/shieldx-bot/shieldx-platform/api/v1alpha1"
-	"github.com/shieldx-bot/shieldx-platform/internal/webhook/notify"
-	"github.com/shieldx-bot/shieldx-platform/internal/webhook/verifyimage"
 )
 
 // TenantReconciler reconciles a Tenant object
@@ -57,14 +59,131 @@ type TenantReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+func (r *TenantReconciler) ensureNamespace(
+	ctx context.Context,
+	tenant *platformv1alpha1.Tenant,
+) error {
+
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "tenant-" + tenant.Name,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(
+		ctx,
+		r.Client,
+		ns,
+		func() error {
+			if ns.Labels == nil {
+				ns.Labels = map[string]string{}
+			}
+			ns.Labels["tenant"] = tenant.Name
+
+			return ctrl.SetControllerReference(tenant, ns, r.Scheme)
+		},
+	)
+
+	return err
+}
+
+// 👉 Namespace bị xóa tay → tự tạo lại
+// 👉 Tenant bị xóa → Namespace bị GC
+
+func (r *TenantReconciler) ensureResourceQuota(
+	ctx context.Context,
+	tenant *platformv1alpha1.Tenant,
+) error {
+
+	quota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-quota",
+			Namespace: "tenant-" + tenant.Name,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(
+		ctx,
+		r.Client,
+		quota,
+		func() error {
+			quota.Spec.Hard = corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("8Gi"),
+				corev1.ResourcePods:   resource.MustParse("20"),
+			}
+
+			return ctrl.SetControllerReference(tenant, quota, r.Scheme)
+		},
+	)
+
+	return err
+}
+
+// 👉 Quota bị sửa tay → controller sửa ngược lại
+// 👉 Đây chính là State Reconciliation
+func (r *TenantReconciler) ensureNetworkPolicy(
+	ctx context.Context,
+	tenant *platformv1alpha1.Tenant,
+) error {
+
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "default-deny",
+			Namespace: "tenant-" + tenant.Name,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(
+		ctx,
+		r.Client,
+		policy,
+		func() error {
+			policy.Spec = networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{},
+				PolicyTypes: []networkingv1.PolicyType{
+					networkingv1.PolicyTypeIngress,
+					networkingv1.PolicyTypeEgress,
+				},
+			}
+
+			return ctrl.SetControllerReference(tenant, policy, r.Scheme)
+		},
+	)
+
+	return err
+}
+
+// 👉 Namespace mới tạo → mặc định bị deny network
+// 👉 Chuẩn security-by-default
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+
+	log.Info("Reconciling Tenant", "name", req.NamespacedName)
 
 	var tenant platformv1alpha1.Tenant
 	if err := r.Get(ctx, req.NamespacedName, &tenant); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
+		return ctrl.Result{}, err
+	}
+	if err := r.Get(ctx, req.NamespacedName, &tenant); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// 2️⃣ Ensure Namespace
+	if err := r.ensureNamespace(ctx, &tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 3️⃣ Ensure ResourceQuota
+	if err := r.ensureResourceQuota(ctx, &tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 4️⃣ Ensure NetworkPolicy
+	if err := r.ensureNetworkPolicy(ctx, &tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -282,6 +401,9 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&platformv1alpha1.Tenant{}).
+		Owns(&corev1.Namespace{}).
+		Owns(&corev1.ResourceQuota{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Named("tenant").
 		Complete(r)
 }
